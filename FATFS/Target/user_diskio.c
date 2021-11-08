@@ -42,7 +42,6 @@
 /* Private define ------------------------------------------------------------*/
 
 /* Private variables ---------------------------------------------------------*/
-
 extern sd_info_ptr sdinfo;
 
 /* Disk status */
@@ -219,9 +218,6 @@ DRESULT USER_ioctl (
     //DRESULT res = RES_ERROR;
     DRESULT res;
 
-	//HAL_UART_Transmit(&huart2,(uint8_t*)"USER_ioctl\n",12,0x1000);
-	//sprintf(str1,"cmd: %d\n",cmd);
-	//HAL_UART_Transmit(&huart2,(uint8_t*)str1,strlen(str1),0x1000);
 
 	if (pdrv) return RES_PARERR;
 	if (Stat & STA_NOINIT) return RES_NOTRDY;

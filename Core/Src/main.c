@@ -31,7 +31,7 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-#define BUF_SIZE 3 //size of buffer for ADC
+#define BUF_SIZE 7 //size of buffer for ADC
 
 /* USER CODE END PTD */
 
@@ -46,7 +46,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
-ADC_HandleTypeDef hadc2;
+DMA_HandleTypeDef hdma_adc1;
 
 RTC_HandleTypeDef hrtc;
 
@@ -62,7 +62,9 @@ uint8_t cur_menu_pos = 0; //save numbers of click on encoder's button
 uint8_t change_value = 0; //1 - change value, 0 - selection position of change
 uint16_t count_encoder = 0; //save numbers of rotation of encoder
 uint8_t show_menu_flag = 0; //when flag is set, screen updates
+uint8_t measurment_over = 1; //flag is set, when the measurement is over
 uint8_t sd_detect = 0; //flag that show, have we SD card in device
+uint8_t adc_finish = 0; //flag that show that adc end measurement
 
 
 /*
@@ -76,30 +78,20 @@ uint16_t tmp;
 //strings for showings data
 uint8_t U_sh[9] = {};
 uint8_t I_sh[9] = {};
-//uint8_t I_sh_exposed[12] = {};
 
 //buffers for sampling data by ADC
-uint16_t buf_I[BUF_SIZE] = {};
-uint16_t buf_U[BUF_SIZE] = {};
+// buf_adc[i % 2 == 0] - I
+// buf_adc[i % 2 == 1] - U
+uint16_t buf_adc[BUF_SIZE * 2] = {};
 
 //sum of elements in the buffer
 uint16_t sum_I = 0;
 uint16_t sum_U = 0;
 
-//counter of the number of elements in the buffer
-uint16_t kol_I = 0;
-uint16_t kol_U = 0;
 
 //last filtered measurements
 uint8_t last_I = 0;
 uint8_t last_U = 0;
-
-//start and end of buffer
-uint16_t start_I = 0;
-uint16_t end_I = 0;
-
-uint16_t start_U = 0;
-uint16_t end_U = 0;
 
 //filtered values
 uint16_t filtered_I = 0;
@@ -119,20 +111,21 @@ uint16_t calibration = 0;
 //power, that conversion on the transistor
 uint32_t transistor_power = 0;
 
-//uint8_t sect[512];
-//extern char str1[60];
 uint32_t byteswritten;
 uint32_t U_DAC; //U for sending to DAC
 extern char USERPath[4]; /* logical drive path */
 
-//FATFS SDFatFs;
-//FIL MyFile;
+FATFS SDFatFs; //SD card
+FIL MyFile; //new file on sd card
 
-//FRESULT res; //результат выполнения
-//uint8_t wtext[]="Hello from STM32!!!";
+FRESULT res_file; //result of writing
 
-volatile uint16_t array_I[256] = {};
-volatile uint16_t array_U[256] = {};
+//saving data of measurement
+uint16_t array_I[256] = {};
+uint16_t array_U[256] = {};
+
+uint16_t measur_count = 0;
+uint8_t second_counter = 0;
 
 /*
  * 0 - 11 bits - data
@@ -149,8 +142,8 @@ uint16_t counter = 2000;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
-static void MX_ADC2_Init(void);
 static void MX_RTC_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_TIM4_Init(void);
@@ -193,8 +186,8 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_ADC1_Init();
-  MX_ADC2_Init();
   MX_RTC_Init();
   MX_SPI1_Init();
   MX_TIM4_Init();
@@ -204,10 +197,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   HAL_ADCEx_Calibration_Start(&hadc1);
-  HAL_ADC_Start_IT(&hadc1);
-
-  HAL_ADCEx_Calibration_Start(&hadc2);
-  HAL_ADC_Start_IT(&hadc2);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)buf_adc, BUF_SIZE * 2);
 
   //PWM for FAN
   HAL_TIM_PWM_Init(&htim2);
@@ -226,30 +216,7 @@ int main(void)
 
   HAL_Delay(100);
 
-  //disk_initialize(SDFatFs.drv);
-
-  //write
-  /*if(f_mount(&SDFatFs,(TCHAR const*)USERPath,0) != FR_OK)
-  {
-	  Error_Handler();
-  }
-  else
-  {
-	  if(f_open(&MyFile,"mywrite.txt",FA_CREATE_ALWAYS|FA_WRITE)!=FR_OK)
-	  {
-		  Error_Handler();
-	  }
-	  else
-	  {
-		  res=f_write(&MyFile,wtext,sizeof(wtext),(void*)&byteswritten);
-		  if((byteswritten==0)||(res!=FR_OK))
-		  {
-			  Error_Handler();
-		  }
-		  f_close(&MyFile);
-	  }
-
-  }*/
+  disk_initialize(SDFatFs.drv);
 
   /* USER CODE END 2 */
 
@@ -259,16 +226,65 @@ int main(void)
   while (1)
   {
 
+	if (adc_finish)//if adc end measurement
+	{
+		//HAL_ADC_Stop_DMA(&hadc1);
+		adc_finish = 0;
+		sum_U = 0;
+		sum_I = 0;
+		for (uint8_t i = 0; i < BUF_SIZE * 2; i++)
+		{
+			if (i % 2)
+				sum_U += buf_adc[i];
+			else
+				sum_I += buf_adc[i];
+
+		}
+
+		filtered_I = sum_I / BUF_SIZE;
+		filtered_I = filtered_I * 206 / 2778;
+
+		filtered_U = sum_U / BUF_SIZE;
+		filtered_U = filtered_U * 2178 / 4096;
+
+		if (filtered_I < 5)
+			calibration = 0;
+
+		if (abs(filtered_I - last_I) < 5 && abs(filtered_I - out_I) >= 3)
+		{
+
+			if (out_I > filtered_I)
+			{
+				calibration++;
+			}
+			else
+			{
+				calibration--;
+			}
+
+		}
+
+		last_I = filtered_I;
+
+		//HAL_ADC_Start_DMA(&hadc1, (uint32_t*)buf_adc, BUF_SIZE * 2);
+	}
+
+	if (measurment_over) //if measurement of capacity end
+	{
+	    display_show(3);
+		write_res_sd();
+	}
+
 	if (show_menu_flag && cur_menu_pos <= 4)
-	  {
-		  display_show(1);
-		  show_menu_flag = 0;
-	  }
-	  else if (show_menu_flag && cur_menu_pos > 4)
-	  {
-		  display_show(2);
-		  show_menu_flag = 0;
-	  }
+	{
+		display_show(1);
+		show_menu_flag = 0;
+	}
+	else if (show_menu_flag && cur_menu_pos > 4)
+	{
+		display_show(2);
+		show_menu_flag = 0;
+	}
 
     /* USER CODE END WHILE */
 
@@ -344,12 +360,12 @@ static void MX_ADC1_Init(void)
   /** Common config
   */
   hadc1.Instance = ADC1;
-  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
   hadc1.Init.ContinuousConvMode = ENABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.NbrOfConversion = 2;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
     Error_Handler();
@@ -358,7 +374,15 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_13CYCLES_5;
+  sConfig.SamplingTime = ADC_SAMPLETIME_55CYCLES_5;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_1;
+  sConfig.Rank = ADC_REGULAR_RANK_2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -366,51 +390,6 @@ static void MX_ADC1_Init(void)
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
-
-}
-
-/**
-  * @brief ADC2 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_ADC2_Init(void)
-{
-
-  /* USER CODE BEGIN ADC2_Init 0 */
-
-  /* USER CODE END ADC2_Init 0 */
-
-  ADC_ChannelConfTypeDef sConfig = {0};
-
-  /* USER CODE BEGIN ADC2_Init 1 */
-
-  /* USER CODE END ADC2_Init 1 */
-  /** Common config
-  */
-  hadc2.Instance = ADC2;
-  hadc2.Init.ScanConvMode = ADC_SCAN_DISABLE;
-  hadc2.Init.ContinuousConvMode = ENABLE;
-  hadc2.Init.DiscontinuousConvMode = DISABLE;
-  hadc2.Init.ExternalTrigConv = ADC_SOFTWARE_START;
-  hadc2.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc2.Init.NbrOfConversion = 1;
-  if (HAL_ADC_Init(&hadc2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /** Configure Regular Channel
-  */
-  sConfig.Channel = ADC_CHANNEL_1;
-  sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_13CYCLES_5;
-  if (HAL_ADC_ConfigChannel(&hadc2, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN ADC2_Init 2 */
-
-  /* USER CODE END ADC2_Init 2 */
 
 }
 
@@ -619,6 +598,22 @@ static void MX_TIM4_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -696,6 +691,7 @@ void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef* hspi)
 void HAL_RTCEx_RTCEventCallback(RTC_HandleTypeDef *hrtc)
 {
     show_menu_flag = 1;
+    second_counter++;
 
     //0,109i + 4.19
     U_DAC = (out_I * 109 + 4190) / 1000;
@@ -705,6 +701,18 @@ void HAL_RTCEx_RTCEventCallback(RTC_HandleTypeDef *hrtc)
     else
     	ADC_data = 28672;
     //ADC_data = 28672 + (out_I + 1) * 4096 / 330;
+
+    //save measurements data
+    if (mode_of_work == 2 && second_counter % 10 == 0 && !measurment_over)
+    {
+    	array_I[measur_count] = (filtered_I + measur_count);
+    	measur_count++;
+
+    	array_U[measur_count] = (filtered_U + measur_count);
+		measur_count++;
+
+		second_counter = 0;
+    }
 
     HAL_GPIO_WritePin(SPI_CC_GPIO_Port, SPI_CC_Pin, 0);
     HAL_SPI_Transmit_IT(&hspi2, (uint8_t*) &ADC_data, 1);
@@ -725,6 +733,9 @@ void HAL_RTCEx_RTCEventCallback(RTC_HandleTypeDef *hrtc)
     	TIM2->CCR1 = 1500;
     }
 
+    HAL_ADC_Start_DMA(&hadc1, (uint32_t*)buf_adc, BUF_SIZE * 2);
+
+
 }
 
 //Data from ADC
@@ -734,107 +745,9 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
     if(hadc->Instance == ADC1) //check if the interrupt comes from ACD1
     {
-    	HAL_ADC_Stop_IT(&hadc1);
-    	HAL_ADC_Stop_IT(&hadc2);
-
-    	raw_I = HAL_ADC_GetValue(&hadc1);
-
-    	if (kol_I < BUF_SIZE)
-		{
-			buf_I[end_I] = raw_I;
-			kol_I++;
-			end_I++;
-
-			sum_I+=raw_I;
-
-		}
-		else
-		{
-			sum_I -= buf_I[start_I];
-
-			if (start_I + 1 >= BUF_SIZE)
-				start_I = 0;
-			else
-				start_I++;
-
-			if (end_I + 1 >= BUF_SIZE)
-				end_I = 0;
-			else
-				end_I++;
-
-			buf_I[end_I] = raw_I;
-			sum_I+=raw_I;
-
-		}
-
-    	filtered_I = sum_I / kol_I;
-    	filtered_I = filtered_I * 206 / 2778;
-
-    	if (filtered_I < 5)
-    		calibration = 0;
-
-    	if (abs(filtered_I - last_I) < 5 && abs(filtered_I - out_I) >= 3)
-    	{
-
-			if (out_I > filtered_I)
-			{
-				calibration++;
-			}
-			else
-			{
-				calibration--;
-			}
-
-    	}
-
-    	last_I = filtered_I;
-
+    	HAL_ADC_Stop(&hadc1);
+    	adc_finish = 1;
     }
-
-
-    if(hadc->Instance == ADC2) //check if the interrupt comes from ACD2
-	{
-    	HAL_ADC_Stop_IT(&hadc1);
-    	HAL_ADC_Stop_IT(&hadc2);
-
-    	raw_U = HAL_ADC_GetValue(&hadc2);
-
-    	if (kol_U < BUF_SIZE)
-		{
-			buf_U[end_U] = raw_U;
-			kol_U++;
-			end_U++;
-
-			sum_U+=raw_U;
-
-			HAL_ADC_Start_IT(&hadc1);
-			HAL_ADC_Start_IT(&hadc2);
-		}
-		else
-		{
-			sum_U -= buf_U[start_U];
-
-			if (start_U + 1 >= BUF_SIZE)
-				start_U = 0;
-			else
-				start_U++;
-
-			if (end_U + 1 >= BUF_SIZE)
-				end_U = 0;
-			else
-				end_U++;
-
-			buf_U[end_U] = raw_U;
-			sum_U+=raw_U;
-
-			HAL_ADC_Start_IT(&hadc1);
-			HAL_ADC_Start_IT(&hadc2);
-		}
-
-    	filtered_U = sum_U / kol_U;
-    	filtered_U = filtered_U * 2178 / 4096;
-	}
-
 
 }
 
@@ -975,8 +888,7 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
  */
 void display_show(uint8_t type)
 {
-	HAL_ADC_Stop_IT(&hadc1);
-	HAL_ADC_Stop_IT(&hadc2);
+	//HAL_ADC_Stop(&hadc1);
 
 	switch (type)
 	{
@@ -1167,10 +1079,62 @@ void display_show(uint8_t type)
 
 			break;
 		}
+/*-----------PAGE_3--------------*/
+		case 3:
+		{
+			display_clear();
+			display_set_cursor(3,1);
+			display_string("Запись");
+			display_set_cursor(0,2);
+			display_string("результатов");
+			display_set_cursor(0,3);
+			display_string("на SD карту");
+			break;
+		}
+
 
 	}
-	HAL_ADC_Start_IT(&hadc1);
-	HAL_ADC_Start_IT(&hadc2);
+	//HAL_ADC_Start_IT(&hadc1);
+	return;
+}
+
+void write_res_sd(void)
+{
+	//write
+	if(f_mount(&SDFatFs,(TCHAR const*)USERPath,0) != FR_OK)
+	{
+	  Error_Handler();
+	}
+	else
+	{
+	  if(f_open(&MyFile,"result.txt",FA_CREATE_ALWAYS|FA_WRITE)!=FR_OK)
+	  {
+		  Error_Handler();
+	  }
+	  else
+	  {
+		  //write data to file
+		  res_file = f_write(&MyFile, "I,X.xxA ; U,X.xxB", 17, (void*)&byteswritten);
+
+		  for (uint16_t i = 0; i < 256; i++)
+		  {
+			  uint8_t text_SD[30] = {};
+			  sprintf(text_SD, "%d;%d", array_I[i], array_U[i]);
+			  text_SD[28] = '\r'; text_SD[29] = '\n';
+
+			  res_file = f_write(&MyFile, text_SD, sizeof(text_SD), (void*)&byteswritten);
+		  }
+
+		  if( (byteswritten==0) || (res_file!=FR_OK) )
+		  {
+			  Error_Handler();
+		  }
+
+		  f_close(&MyFile);
+	  }
+
+	}
+	measurment_over = 0;
 	return;
 }
 
