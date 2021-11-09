@@ -1,0 +1,6 @@
+(sym_lib_table
+  (lib (name nokia_5110-3310_lcd)(type Legacy)(uri ${KIPRJMOD}/Nokia_display/nokia_5110-3310_lcd.lib)(options "")(descr ""))
+  (lib (name LM2903N_NOPB)(type Legacy)(uri ${KIPRJMOD}/LM2903/LM2903N_NOPB.lib)(options "")(descr ""))
+  (lib (name LM358N_NOPB)(type Legacy)(uri ${KIPRJMOD}/LM358/LM358N_NOPB.lib)(options "")(descr ""))
+  (lib (name IRFP260N)(type Legacy)(uri ${KIPRJMOD}/IRFP260/IRFP260N.lib)(options "")(descr ""))
+)

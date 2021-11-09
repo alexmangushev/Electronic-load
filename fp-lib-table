@@ -1,0 +1,5 @@
+(fp_lib_table
+  (lib (name electronic_load)(type KiCad)(uri ${KIPRJMOD}/Nokia_display/electronic_load.pretty)(options "")(descr ""))
+  (lib (name Nokia_display)(type KiCad)(uri ${KIPRJMOD}/Nokia_display/Nokia_display.pretty)(options "")(descr ""))
+  (lib (name Hi-Link_12_5)(type KiCad)(uri ${KIPRJMOD}/HLK-5M12/Hi-Link_12_5.pretty)(options "")(descr ""))
+)
