@@ -31,7 +31,8 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-#define BUF_SIZE 7 //size of buffer for ADC
+#define BUF_SIZE 10 //size of buffer for ADC
+#define MEASUREMENT_PERIOD 10 //period of writing measurements, seconds
 
 /* USER CODE END PTD */
 
@@ -62,7 +63,7 @@ uint8_t cur_menu_pos = 0; //save numbers of click on encoder's button
 uint8_t change_value = 0; //1 - change value, 0 - selection position of change
 uint16_t count_encoder = 0; //save numbers of rotation of encoder
 uint8_t show_menu_flag = 0; //when flag is set, screen updates
-uint8_t measurment_over = 1; //flag is set, when the measurement is over
+uint8_t measurement_over = 0; //flag is set, when the measurement is over
 uint8_t sd_detect = 0; //flag that show, have we SD card in device
 uint8_t adc_finish = 0; //flag that show that adc end measurement
 
@@ -91,7 +92,6 @@ uint16_t sum_U = 0;
 
 //last filtered measurements
 uint8_t last_I = 0;
-uint8_t last_U = 0;
 
 //filtered values
 uint16_t filtered_I = 0;
@@ -116,9 +116,9 @@ uint32_t U_DAC; //U for sending to DAC
 extern char USERPath[4]; /* logical drive path */
 
 FATFS SDFatFs; //SD card
-FIL MyFile; //new file on sd card
+FIL SD_result_file; //new file on sd card
 
-FRESULT res_file; //result of writing
+FRESULT SD_writing_OK; //status of writing on SD
 
 //saving data of measurement
 uint16_t array_I[256] = {};
@@ -134,7 +134,7 @@ uint8_t second_counter = 0;
  * 14 - 1
  * 15 - 0
  */
-uint16_t ADC_data= 0;
+uint16_t DAC_data= 0;
 uint16_t counter = 2000;
 
 /* USER CODE END PV */
@@ -242,15 +242,17 @@ int main(void)
 		}
 
 		filtered_I = sum_I / BUF_SIZE;
-		filtered_I = filtered_I * 206 / 2778;
+		filtered_I = filtered_I * 103 / 1389; // k(middle) = 10.8
+		//(330 / 4096) / 10.84
 
 		filtered_U = sum_U / BUF_SIZE;
-		filtered_U = filtered_U * 2178 / 4096;
+		filtered_U = filtered_U * 1089 / 2048; //K = 6.6 (330 / 4096 * 6.6)
+		//non calibrate
 
 		if (filtered_I < 5)
 			calibration = 0;
 
-		if (abs(filtered_I - last_I) < 5 && abs(filtered_I - out_I) >= 3)
+		if (abs(filtered_I - out_I) >= 1) //10mA
 		{
 
 			if (out_I > filtered_I)
@@ -269,7 +271,7 @@ int main(void)
 		//HAL_ADC_Start_DMA(&hadc1, (uint32_t*)buf_adc, BUF_SIZE * 2);
 	}
 
-	if (measurment_over) //if measurement of capacity end
+	if (measurement_over) //if measurement of capacity end
 	{
 	    display_show(3);
 		write_res_sd();
@@ -697,25 +699,25 @@ void HAL_RTCEx_RTCEventCallback(RTC_HandleTypeDef *hrtc)
     U_DAC = (out_I * 109 + 4190) / 1000;
 
     if (out_I != 0)// && (mode_of_work == 0 || mode_of_work == 1)
-    	ADC_data = 28672 + ((uint16_t)U_DAC + 1) * 4096 / 330 + calibration;
+    	DAC_data = 28672 + ((uint16_t)U_DAC + 1) * 4096 / 330 + calibration;
     else
-    	ADC_data = 28672;
-    //ADC_data = 28672 + (out_I + 1) * 4096 / 330;
+    	DAC_data = 28672;
+    //DAC_data = 28672 + (out_I + 1) * 4096 / 330;
 
     //save measurements data
-    if (mode_of_work == 2 && second_counter % 10 == 0 && !measurment_over)
+    if (mode_of_work == 2 && second_counter % MEASUREMENT_PERIOD == 0 && !measurement_over)
     {
-    	array_I[measur_count] = (filtered_I + measur_count);
+    	array_I[measur_count] = filtered_I;
     	measur_count++;
 
-    	array_U[measur_count] = (filtered_U + measur_count);
+    	array_U[measur_count] = filtered_U;
 		measur_count++;
 
 		second_counter = 0;
     }
 
     HAL_GPIO_WritePin(SPI_CC_GPIO_Port, SPI_CC_Pin, 0);
-    HAL_SPI_Transmit_IT(&hspi2, (uint8_t*) &ADC_data, 1);
+    HAL_SPI_Transmit_IT(&hspi2, (uint8_t*) &DAC_data, 1);
 
     transistor_power = filtered_I * filtered_U;
 
@@ -1008,9 +1010,9 @@ void display_show(uint8_t type)
 			}
 			display_set_cursor(11,2);	display_char('A');
 
-			display_set_cursor(0,3);  display_string(I_sh);
+			display_set_cursor(0,3);  display_string(U_sh);
 
-			display_set_cursor(0,4);  display_string(U_sh);
+			display_set_cursor(0,4);  display_string(I_sh);
 
 			display_set_cursor(10,4);
 			if (sd_detect)
@@ -1107,14 +1109,18 @@ void write_res_sd(void)
 	}
 	else
 	{
-	  if(f_open(&MyFile,"result.txt",FA_CREATE_ALWAYS|FA_WRITE)!=FR_OK)
+	  if(f_open(&SD_result_file,"result.txt",FA_CREATE_ALWAYS|FA_WRITE)!=FR_OK)
 	  {
 		  Error_Handler();
 	  }
 	  else
 	  {
 		  //write data to file
-		  res_file = f_write(&MyFile, "I,X.xxA ; U,X.xxB", 17, (void*)&byteswritten);
+		  SD_writing_OK = f_write(&SD_result_file, "I,X.xxA ; U,X.xxB\n", 18, (void*)&byteswritten);
+		  uint8_t tmp_text_SD[35] = {};
+		  sprintf(tmp_text_SD, "Период измерений %d, с\n", MEASUREMENT_PERIOD);
+		  tmp_text_SD[34] = '\n';
+		  SD_writing_OK = f_write(&SD_result_file, tmp_text_SD, sizeof(tmp_text_SD), (void*)&byteswritten);
 
 		  for (uint16_t i = 0; i < 256; i++)
 		  {
@@ -1122,19 +1128,19 @@ void write_res_sd(void)
 			  sprintf(text_SD, "%d;%d", array_I[i], array_U[i]);
 			  text_SD[28] = '\r'; text_SD[29] = '\n';
 
-			  res_file = f_write(&MyFile, text_SD, sizeof(text_SD), (void*)&byteswritten);
+			  SD_writing_OK = f_write(&SD_result_file, text_SD, sizeof(text_SD), (void*)&byteswritten);
 		  }
 
-		  if( (byteswritten==0) || (res_file!=FR_OK) )
+		  if( (byteswritten==0) || (SD_writing_OK!=FR_OK) )
 		  {
 			  Error_Handler();
 		  }
 
-		  f_close(&MyFile);
+		  f_close(&SD_result_file);
 	  }
 
 	}
-	measurment_over = 0;
+	measurement_over = 0;
 	return;
 }
 
