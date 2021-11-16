@@ -89,10 +89,6 @@ uint16_t buf_adc[BUF_SIZE * 2] = {};
 uint16_t sum_I = 0;
 uint16_t sum_U = 0;
 
-
-//last filtered measurements
-uint8_t last_I = 0;
-
 //filtered values
 uint16_t filtered_I = 0;
 uint16_t filtered_U = 0;
@@ -214,9 +210,9 @@ int main(void)
 
   display_init();
 
-  HAL_Delay(100);
-
   disk_initialize(SDFatFs.drv);
+
+  HAL_Delay(500);
 
   /* USER CODE END 2 */
 
@@ -265,8 +261,6 @@ int main(void)
 			}
 
 		}
-
-		last_I = filtered_I;
 
 		//HAL_ADC_Start_DMA(&hadc1, (uint32_t*)buf_adc, BUF_SIZE * 2);
 	}
@@ -698,22 +692,27 @@ void HAL_RTCEx_RTCEventCallback(RTC_HandleTypeDef *hrtc)
     //0,109i + 4.19
     U_DAC = (out_I * 109 + 4190) / 1000;
 
-    if (out_I != 0)// && (mode_of_work == 0 || mode_of_work == 1)
+    if (out_I != 0 && mode_of_work == 1 || mode_of_work == 2)
     	DAC_data = 28672 + ((uint16_t)U_DAC + 1) * 4096 / 330 + calibration;
     else
     	DAC_data = 28672;
+
     //DAC_data = 28672 + (out_I + 1) * 4096 / 330;
 
     //save measurements data
     if (mode_of_work == 2 && second_counter % MEASUREMENT_PERIOD == 0 && !measurement_over)
     {
     	array_I[measur_count] = filtered_I;
-    	measur_count++;
-
     	array_U[measur_count] = filtered_U;
+
 		measur_count++;
 
 		second_counter = 0;
+
+		if (measur_count == 256 || filtered_U < minimum_U)
+		{
+			measurement_over = 1;
+		}
     }
 
     HAL_GPIO_WritePin(SPI_CC_GPIO_Port, SPI_CC_Pin, 0);
@@ -803,14 +802,14 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 				}
 				case 2:
 				{
-					count_encoder = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
+					//count_encoder = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
 					out_I/=10; out_I*=10; out_I+=count_encoder;
 					show_menu_flag = 1;
 					break;
 				}
 				case 3:
 				{
-					count_encoder = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
+					//count_encoder = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
 					tmp = out_I / 100;
 					out_I %= 10;
 					out_I += tmp * 100 + count_encoder * 10;
@@ -819,7 +818,7 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 				}
 				case 4:
 				{
-					count_encoder = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
+					//count_encoder = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
 					if (count_encoder > 2)
 					{
 						count_encoder = 2;
@@ -833,14 +832,14 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 
 				case 5:
 				{
-					count_encoder = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
+					//count_encoder = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
 					minimum_U/=10; minimum_U*=10; minimum_U+=count_encoder;
 					show_menu_flag = 1;
 					break;
 				}
 				case 6:
 				{
-					count_encoder = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
+					//count_encoder = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
 					tmp = minimum_U / 100;
 					minimum_U %= 10;
 					minimum_U += tmp * 100 + count_encoder * 10;
@@ -849,9 +848,32 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 				}
 				case 7:
 				{
-					count_encoder = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
-					minimum_U %= 100; minimum_U = minimum_U + count_encoder * 100;
+					//count_encoder = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
+					//minimum_U %= 100; minimum_U = minimum_U + count_encoder * 100;
+					tmp = minimum_U / 1000;
+					minimum_U %= 100;
+					minimum_U += tmp * 1000 + count_encoder * 100;
 					show_menu_flag = 1;
+					break;
+				}
+				case 8:
+				{
+					if (count_encoder > 1)
+					{
+						count_encoder = 1;
+						TIM4->CNT = 2;
+					}
+					//count_encoder = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
+					minimum_U %= 1000; minimum_U = minimum_U + count_encoder * 1000;
+					show_menu_flag = 1;
+					break;
+				}
+				case 9:
+				{
+					display_show(3);
+					write_res_sd();
+					show_menu_flag = 1;
+					change_value = 0;
 					break;
 				}
 			}
@@ -860,24 +882,15 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 		{
 			cur_menu_pos = __HAL_TIM_GET_COUNTER(htim) / 2 % 10;
 
-			if (cur_menu_pos > 7)
+			if (cur_menu_pos > 9)
 			{
 			  cur_menu_pos = 0;
 			  TIM4->CNT = 0;
 
-			  //HAL_ADC_Start_IT(&hadc1);
-			  //HAL_ADC_Start_IT(&hadc2);
-
-			  //HAL_RTCEx_SetSecond_IT(&hrtc);
 			}
 			else if (cur_menu_pos)
 			{
-			  //HAL_RTCEx_DeactivateSecond(&hrtc);
-
-			  //HAL_ADC_Stop_IT(&hadc1);
-			  //HAL_ADC_Stop_IT(&hadc2);
-
-			  show_menu_flag = 1;
+				show_menu_flag = 1;
 			}
 		}
 	}
@@ -890,7 +903,6 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
  */
 void display_show(uint8_t type)
 {
-	//HAL_ADC_Stop(&hadc1);
 
 	switch (type)
 	{
@@ -1039,45 +1051,73 @@ void display_show(uint8_t type)
 			display_set_cursor(0,2);  display_string("U_отс=");
 			display_set_cursor(6,2);
 
-			if (cur_menu_pos >= 5 && cur_menu_pos <= 7)
+			if (cur_menu_pos >= 5 && cur_menu_pos <= 8)
 			{
 				switch (cur_menu_pos)
 				{
 					case 5:
 					{
-						display_char( minimum_U / 100 + 48);
-						display_set_cursor(7,2); display_char('.');
-						display_set_cursor(8,2); display_char(minimum_U % 100 / 10 + 48);
-						display_set_cursor(9,2); display_char_underline(minimum_U % 10  + 48);
+						display_char( minimum_U / 1000 + 48);
+						display_set_cursor(7,2); display_char( minimum_U / 100 % 10 + 48);
+						display_set_cursor(8,2); display_char('.');
+						display_set_cursor(9,2); display_char(minimum_U % 100 / 10 + 48);
+						display_set_cursor(10,2); display_char_underline(minimum_U % 10  + 48);
 						break;
 					}
 					case 6:
 					{
-						display_char( minimum_U / 100 + 48);
-						display_set_cursor(7,2); display_char('.');
-						display_set_cursor(8,2); display_char_underline(minimum_U % 100 / 10 + 48);
-						display_set_cursor(9,2); display_char(minimum_U % 10  + 48);
+						display_char( minimum_U / 1000 + 48);
+						display_set_cursor(7,2); display_char( minimum_U / 100 % 10 + 48);
+						display_set_cursor(8,2); display_char('.');
+						display_set_cursor(9,2); display_char_underline(minimum_U % 100 / 10 + 48);
+						display_set_cursor(10,2); display_char(minimum_U % 10  + 48);
 						break;
 					}
 					case 7:
 					{
-						display_char_underline( minimum_U / 100 + 48);
-						display_set_cursor(7,2); display_char('.');
-						display_set_cursor(8,2); display_char(minimum_U % 100 / 10 + 48);
-						display_set_cursor(9,2); display_char(minimum_U % 10  + 48);
+						display_char( minimum_U / 1000 + 48);
+						display_set_cursor(7,2); display_char_underline( minimum_U / 100 % 10 + 48);
+						display_set_cursor(8,2); display_char('.');
+						display_set_cursor(9,2); display_char(minimum_U % 100 / 10 + 48);
+						display_set_cursor(10,2); display_char(minimum_U % 10  + 48);
+						break;
+					}
+					case 8:
+					{
+						display_char_underline( minimum_U / 1000 + 48);
+						display_set_cursor(7,2); display_char( minimum_U / 100 % 10 + 48);
+						display_set_cursor(8,2); display_char('.');
+						display_set_cursor(9,2); display_char(minimum_U % 100 / 10 + 48);
+						display_set_cursor(10,2); display_char(minimum_U % 10  + 48);
 						break;
 					}
 				}
 			}
 			else
 			{
-				display_char( minimum_U / 100 + 48);
-				display_set_cursor(7,2); display_char('.');
-				display_set_cursor(8,2); display_char(minimum_U % 100 / 10 + 48);
-				display_set_cursor(9,2); display_char(minimum_U % 10  + 48);
+				display_char( minimum_U / 1000 + 48);
+				display_set_cursor(7,2); display_char( minimum_U / 100 % 10 + 48);
+				display_set_cursor(8,2); display_char('.');
+				display_set_cursor(9,2); display_char(minimum_U % 100 / 10 + 48);
+				display_set_cursor(10,2); display_char(minimum_U % 10  + 48);
 			}
 
-			display_set_cursor(10,2);  display_string("В");
+			display_set_cursor(11,2);  display_string("В");
+
+			display_set_cursor(0,4);  display_string("Запись на SD");
+
+			display_set_cursor(4,5);
+
+			if (cur_menu_pos == 9)
+			{
+				display_char_underline('Д');
+				display_set_cursor(5,5);
+				display_char_underline('а');
+			}
+			else
+				display_string("Да");
+
+
 
 			break;
 		}
@@ -1094,24 +1134,85 @@ void display_show(uint8_t type)
 			break;
 		}
 
+/*-----------ERRORS--------------*/
+		case 4:
+		{
+			display_clear();
+			display_set_cursor(0,0);
+			display_string("Ошибка 1");
+			display_set_cursor(3,1);
+			display_string("Запись");
+			display_set_cursor(0,2);
+			display_string("результатов");
+			display_set_cursor(0,3);
+			display_string("на SD карту");
+			break;
+		}
+		case 5:
+		{
+			display_clear();
+			display_set_cursor(0,0);
+			display_string("Ошибка 2");
+			display_set_cursor(3,1);
+			display_string("Запись");
+			display_set_cursor(0,2);
+			display_string("результатов");
+			display_set_cursor(0,3);
+			display_string("на SD карту");
+			break;
+		}
+		case 6:
+		{
+			display_clear();
+			display_set_cursor(0,0);
+			display_string("Ошибка 3");
+			display_set_cursor(3,1);
+			display_string("Запись");
+			display_set_cursor(0,2);
+			display_string("результатов");
+			display_set_cursor(0,3);
+			display_string("на SD карту");
+			break;
+		}
+		case 7:
+		{
+			display_clear();
+			display_set_cursor(0,0);
+			display_string("Ошибка 4");
+			display_set_cursor(3,1);
+			display_string("Запись");
+			display_set_cursor(0,2);
+			display_string("результатов");
+			display_set_cursor(0,3);
+			display_string("на SD карту");
+			break;
+		}
 
 	}
-	//HAL_ADC_Start_IT(&hadc1);
 	return;
 }
 
 void write_res_sd(void)
 {
+	HAL_ADC_Stop_DMA(&hadc1);
+	HAL_RTCEx_DeactivateSecond(&hrtc);
+
+	sd_ini();//
+
+	disk_initialize(SDFatFs.drv);
+
 	//write
 	if(f_mount(&SDFatFs,(TCHAR const*)USERPath,0) != FR_OK)
 	{
-	  Error_Handler();
+	  //Error_Handler();
+	  display_show(4);
 	}
 	else
 	{
 	  if(f_open(&SD_result_file,"result.txt",FA_CREATE_ALWAYS|FA_WRITE)!=FR_OK)
 	  {
-		  Error_Handler();
+		  //Error_Handler();
+		  display_show(5);
 	  }
 	  else
 	  {
@@ -1122,18 +1223,19 @@ void write_res_sd(void)
 		  tmp_text_SD[34] = '\n';
 		  SD_writing_OK = f_write(&SD_result_file, tmp_text_SD, sizeof(tmp_text_SD), (void*)&byteswritten);
 
-		  for (uint16_t i = 0; i < 256; i++)
+		  for (uint16_t i = 0; i < measur_count; i++)
 		  {
-			  uint8_t text_SD[30] = {};
-			  sprintf(text_SD, "%d;%d", array_I[i], array_U[i]);
-			  text_SD[28] = '\r'; text_SD[29] = '\n';
+			  uint8_t text_SD[40] = {};
+			  sprintf(text_SD, "%d,%d;%d,%d", array_I[i]/100, array_I[i]%100, array_U[i]/100, array_U[i]%100);
+			  text_SD[38] = '\r'; text_SD[39] = '\n';
 
 			  SD_writing_OK = f_write(&SD_result_file, text_SD, sizeof(text_SD), (void*)&byteswritten);
 		  }
 
 		  if( (byteswritten==0) || (SD_writing_OK!=FR_OK) )
 		  {
-			  Error_Handler();
+			  //Error_Handler();
+			  display_show(6);
 		  }
 
 		  f_close(&SD_result_file);
@@ -1141,6 +1243,11 @@ void write_res_sd(void)
 
 	}
 	measurement_over = 0;
+	mode_of_work = 0;
+
+	HAL_RTCEx_SetSecond_IT(&hrtc);
+	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)buf_adc, BUF_SIZE * 2);
+
 	return;
 }
 
