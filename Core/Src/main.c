@@ -67,7 +67,6 @@ uint8_t measurement_over = 0; //flag is set, when the measurement is over
 uint8_t sd_detect = 0; //flag that show, have we SD card in device
 uint8_t adc_finish = 0; //flag that show that adc end measurement
 
-
 /*
  * 0 - out current zero (ВЫКЛ)
  * 1 - start (ВКЛ)
@@ -442,7 +441,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -1139,7 +1138,7 @@ void display_show(uint8_t type)
 		{
 			display_clear();
 			display_set_cursor(0,0);
-			display_string("Ошибка 1");
+			display_string("Ошибка1");
 			display_set_cursor(3,1);
 			display_string("Запись");
 			display_set_cursor(0,2);
@@ -1197,7 +1196,7 @@ void write_res_sd(void)
 	HAL_ADC_Stop_DMA(&hadc1);
 	HAL_RTCEx_DeactivateSecond(&hrtc);
 
-	sd_ini();//
+	sd_ini(); //
 
 	disk_initialize(SDFatFs.drv);
 
@@ -1244,6 +1243,8 @@ void write_res_sd(void)
 	}
 	measurement_over = 0;
 	mode_of_work = 0;
+
+
 
 	HAL_RTCEx_SetSecond_IT(&hrtc);
 	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)buf_adc, BUF_SIZE * 2);

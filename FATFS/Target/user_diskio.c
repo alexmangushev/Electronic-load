@@ -131,7 +131,7 @@ DRESULT USER_read (
 
 	if (Stat & STA_NOINIT) return RES_NOTRDY;
 
-	if (!(sdinfo.type_SD & 4)) sector *= 512; /* Convert to byte address if needed */
+	if (sdinfo.type_SD & 4) sector *= 512; /* Convert to byte address if needed */
 
 	if (count == 1) /* Single block read */
 	{
@@ -179,7 +179,7 @@ DRESULT USER_write (
 	if (Stat & STA_PROTECT)
 		return RES_WRPRT;
 
-	if (!(sdinfo.type_SD & 4))
+	if (sdinfo.type_SD & 4)
 		sector *= 512; /* Convert to byte address if needed */
 
 	if (count == 1) /* Single block read */

@@ -20,8 +20,8 @@
 /*
  * LED
  */
-#define LD_ON HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, 0);
-#define LD_OFF HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, 1);
+//#define LD_ON HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, 0);
+//#define LD_OFF HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, 1);
 
 //--------------------------------------------------
 
