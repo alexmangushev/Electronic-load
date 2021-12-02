@@ -172,13 +172,6 @@ static uint8_t SD_cmd (uint8_t cmd, uint32_t arg)
 }
 //-----------------------------------------------
 
-
-void SD_PowerOn(void)
-{
-	HAL_Delay(20); //ждём 20 милисекунд, для того, чтобы напряжение стабилизировалось
-	return;
-}
-
 uint8_t sd_ini(void)
 {
 	uint8_t i, cmd;

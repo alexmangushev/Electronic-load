@@ -108,7 +108,7 @@ uint32_t transistor_power = 0;
 
 uint32_t byteswritten;
 uint32_t U_DAC; //U for sending to DAC
-extern char USERPath[4]; /* logical drive path */
+extern char USERPath[4]; // logical drive path
 
 FATFS SDFatFs; //SD card
 FIL SD_result_file; //new file on sd card
@@ -209,7 +209,7 @@ int main(void)
 
   display_init();
 
-  disk_initialize(SDFatFs.drv);
+  //disk_initialize(SDFatFs.drv);
 
   HAL_Delay(500);
 
@@ -1193,61 +1193,75 @@ void display_show(uint8_t type)
 
 void write_res_sd(void)
 {
+
+	/*FATFS SDFatFs; //SD card
+	FIL SD_result_file; //new file on sd card*/
+
+
 	HAL_ADC_Stop_DMA(&hadc1);
+	HAL_ADC_Stop(&hadc1);
 	HAL_RTCEx_DeactivateSecond(&hrtc);
 
-	sd_ini(); //
+	HAL_SPI_Abort(&hspi2);
+	HAL_TIM_Encoder_Stop_IT(&htim4, TIM_CHANNEL_1);
+	HAL_TIM_PWM_Stop_IT(&htim2, TIM_CHANNEL_1);
 
-	disk_initialize(SDFatFs.drv);
+	if (!sd_ini() && sd_detect) //
+	{
+		sd_ini();
+		disk_initialize(SDFatFs.drv);
 
-	//write
-	if(f_mount(&SDFatFs,(TCHAR const*)USERPath,0) != FR_OK)
-	{
-	  //Error_Handler();
-	  display_show(4);
-	}
-	else
-	{
-	  if(f_open(&SD_result_file,"result.txt",FA_CREATE_ALWAYS|FA_WRITE)!=FR_OK)
-	  {
+		//write
+		if(f_mount(&SDFatFs,(TCHAR const*)USERPath,0) != FR_OK)
+		{
 		  //Error_Handler();
-		  display_show(5);
-	  }
-	  else
-	  {
-		  //write data to file
-		  SD_writing_OK = f_write(&SD_result_file, "I,X.xxA ; U,X.xxB\n", 18, (void*)&byteswritten);
-		  uint8_t tmp_text_SD[35] = {};
-		  sprintf(tmp_text_SD, "Период измерений %d, с\n", MEASUREMENT_PERIOD);
-		  tmp_text_SD[34] = '\n';
-		  SD_writing_OK = f_write(&SD_result_file, tmp_text_SD, sizeof(tmp_text_SD), (void*)&byteswritten);
-
-		  for (uint16_t i = 0; i < measur_count; i++)
-		  {
-			  uint8_t text_SD[40] = {};
-			  sprintf(text_SD, "%d,%d;%d,%d", array_I[i]/100, array_I[i]%100, array_U[i]/100, array_U[i]%100);
-			  text_SD[38] = '\r'; text_SD[39] = '\n';
-
-			  SD_writing_OK = f_write(&SD_result_file, text_SD, sizeof(text_SD), (void*)&byteswritten);
-		  }
-
-		  if( (byteswritten==0) || (SD_writing_OK!=FR_OK) )
+		  display_show(4);
+		}
+		else
+		{
+		  if(f_open(&SD_result_file,"result.txt",FA_CREATE_ALWAYS|FA_WRITE)!=FR_OK)
 		  {
 			  //Error_Handler();
-			  display_show(6);
+			  display_show(5);
+		  }
+		  else
+		  {
+			  //write data to file
+			  SD_writing_OK = f_write(&SD_result_file, "I,X.xxA ; U,X.xxB\n", 18, (void*)&byteswritten);
+			  uint8_t tmp_text_SD[35] = {};
+			  sprintf(tmp_text_SD, "Период измерений %d, с\n", MEASUREMENT_PERIOD);
+			  tmp_text_SD[34] = '\n';
+			  SD_writing_OK = f_write(&SD_result_file, tmp_text_SD, sizeof(tmp_text_SD), (void*)&byteswritten);
+
+			  for (uint16_t i = 0; i < measur_count; i++)
+			  {
+				  uint8_t text_SD[40] = {};
+				  sprintf(text_SD, "%d,%d;%d,%d", array_I[i]/100, array_I[i]%100, array_U[i]/100, array_U[i]%100);
+				  text_SD[38] = '\r'; text_SD[39] = '\n';
+
+				  SD_writing_OK = f_write(&SD_result_file, text_SD, sizeof(text_SD), (void*)&byteswritten);
+			  }
+
+			  if( (byteswritten==0) || (SD_writing_OK!=FR_OK) )
+			  {
+				  //Error_Handler();
+				  display_show(6);
+			  }
+
+			  f_close(&SD_result_file);
 		  }
 
-		  f_close(&SD_result_file);
-	  }
-
+		}
+		measurement_over = 0;
+		mode_of_work = 0;
 	}
-	measurement_over = 0;
-	mode_of_work = 0;
-
 
 
 	HAL_RTCEx_SetSecond_IT(&hrtc);
 	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)buf_adc, BUF_SIZE * 2);
+	HAL_SPI_Init(&hspi2);
+	HAL_TIM_Encoder_Start_IT(&htim4, TIM_CHANNEL_1);
+	HAL_TIM_PWM_Start_IT(&htim2, TIM_CHANNEL_1);
 
 	return;
 }
